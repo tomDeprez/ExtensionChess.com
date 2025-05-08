@@ -2,10 +2,10 @@
   "manifest_version": 3,
   "name": "Chess.com Helper",
   "version": "1.0",
-  "description": "Assistant d'analyse pour Chess.com",
+  "description": "Une extension pour améliorer votre expérience sur Chess.com",
   "permissions": [
     "activeTab",
-    "scripting"
+    "storage"
   ],
   "host_permissions": [
     "https://*.chess.com/*"
@@ -20,18 +20,19 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.chess.com/*"],
-      "js": [
-        "chess.js",
-        "stockfish.js",
-        "content.js"
-      ]
+      "matches": ["https://*.chess.com/*"],
+      "js": ["content.js"]
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["images/*"],
-      "matches": ["*://*.chess.com/*"]
+      "resources": ["images/*", "stockfish.js"],
+      "matches": ["https://*.chess.com/*"]
     }
-  ]
+  ],
+  "icons": {
+    "16": "images/icon16.png",
+    "48": "images/icon48.png",
+    "128": "images/icon128.png"
+  }
 } 

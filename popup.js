@@ -48,8 +48,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Placer les nouvelles pièces
     pieces.forEach(piece => {
-      const file = piece.square[0].charCodeAt(0) - 'a'.charCodeAt(0); // 0 pour 'a', 7 pour 'h'
-      const rank = 8 - parseInt(piece.square[1]); // 0 pour la rangée 8 (en haut), 7 pour la rangée 1 (en bas)
+      const file = piece.square[0].charCodeAt(0) - 'a'.charCodeAt(0);
+      const rank = 8 - parseInt(piece.square[1]);
 
       const pieceElement = document.createElement('div');
       pieceElement.className = `piece ${piece.color}${piece.type}`;
@@ -62,6 +62,10 @@ document.addEventListener('DOMContentLoaded', function() {
       pieceElement.style.backgroundSize = '100% 100%';
       pieceElement.style.backgroundRepeat = 'no-repeat';
       pieceElement.style.backgroundPosition = 'center';
+
+      // Utiliser chrome.runtime.getURL pour obtenir le chemin correct
+      const imagePath = chrome.runtime.getURL(`images/${piece.color}${piece.type}.png`);
+      pieceElement.style.backgroundImage = `url('${imagePath}')`;
 
       miniBoard.appendChild(pieceElement);
     });
@@ -98,14 +102,24 @@ document.addEventListener('DOMContentLoaded', function() {
   // Analyser automatiquement la position au chargement
   function analyzeCurrentPosition() {
     chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+      if (!tabs[0]) {
+        updateStatus("Aucun onglet actif trouvé", true);
+        return;
+      }
+
       chrome.tabs.sendMessage(tabs[0].id, {action: "analyzePosition"}, function(response) {
+        if (chrome.runtime.lastError) {
+          updateStatus("Erreur de communication avec la page", true);
+          return;
+        }
+
         if (response && response.status) {
           updateStatus(response.message);
           if (response.analysis) {
             showAnalysis(response.analysis);
           }
         } else {
-          updateStatus(response.message || "Erreur lors de l'analyse", true);
+          updateStatus(response?.message || "Erreur lors de l'analyse", true);
         }
       });
     });
@@ -129,72 +143,85 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!statsButton) return;
 
     statsButton.addEventListener('click', async () => {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      
-      chrome.tabs.sendMessage(tab.id, { action: "showStats" }, function(response) {
-        if (response && response.status) {
-          const stats = response.stats;
-          const statsDiv = document.getElementById('stats');
-          statsDiv.innerHTML = `
-            <div class="stats-summary">
-              <h3>Résumé de la partie</h3>
-              <div class="stats-grid">
-                <div class="stat-item">
-                  <span class="stat-label">Total des coups</span>
-                  <span class="stat-value">${stats.totalMoves}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">Bons coups blancs</span>
-                  <span class="stat-value">${stats.whiteGoodMoves}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">Bons coups noirs</span>
-                  <span class="stat-value">${stats.blackGoodMoves}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">Coups excellents blancs</span>
-                  <span class="stat-value">${stats.whiteExcellentMoves}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">Coups excellents noirs</span>
-                  <span class="stat-value">${stats.blackExcellentMoves}</span>
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab) {
+          updateStatus("Aucun onglet actif trouvé", true);
+          return;
+        }
+
+        chrome.tabs.sendMessage(tab.id, { action: "showStats" }, function(response) {
+          if (chrome.runtime.lastError) {
+            updateStatus("Erreur de communication avec la page", true);
+            return;
+          }
+
+          if (response && response.status) {
+            const stats = response.stats;
+            const statsDiv = document.getElementById('stats');
+            statsDiv.innerHTML = `
+              <div class="stats-summary">
+                <h3>Résumé de la partie</h3>
+                <div class="stats-grid">
+                  <div class="stat-item">
+                    <span class="stat-label">Total des coups</span>
+                    <span class="stat-value">${stats.totalMoves}</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-label">Bons coups blancs</span>
+                    <span class="stat-value">${stats.whiteGoodMoves}</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-label">Bons coups noirs</span>
+                    <span class="stat-value">${stats.blackGoodMoves}</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-label">Coups excellents blancs</span>
+                    <span class="stat-value">${stats.whiteExcellentMoves}</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-label">Coups excellents noirs</span>
+                    <span class="stat-value">${stats.blackExcellentMoves}</span>
+                  </div>
                 </div>
               </div>
-            </div>
-            <div class="moves-table">
-              <h3>Analyse détaillée des coups</h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th>N°</th>
-                    <th>Couleur</th>
-                    <th>Coup</th>
-                    <th>Qualité</th>
-                    <th>Explication</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${stats.moves.map(move => `
-                    <tr class="${move.color}">
-                      <td>${move.number}</td>
-                      <td>${move.color === 'white' ? 'Blancs' : 'Noirs'}</td>
-                      <td>${move.move}</td>
-                      <td>${move.quality}</td>
-                      <td>${move.explanation}</td>
+              <div class="moves-table">
+                <h3>Analyse détaillée des coups</h3>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>N°</th>
+                      <th>Couleur</th>
+                      <th>Coup</th>
+                      <th>Qualité</th>
+                      <th>Explication</th>
                     </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            </div>
-          `;
-        } else {
-          document.getElementById('stats').innerHTML = `
-            <div class="error-message">
-              Impossible d'analyser les statistiques. Assurez-vous d'être sur une partie d'échecs.
-            </div>
-          `;
-        }
-      });
+                  </thead>
+                  <tbody>
+                    ${stats.moves.map(move => `
+                      <tr class="${move.color}">
+                        <td>${move.number}</td>
+                        <td>${move.color === 'white' ? 'Blancs' : 'Noirs'}</td>
+                        <td>${move.move}</td>
+                        <td>${move.quality}</td>
+                        <td>${move.explanation}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            `;
+          } else {
+            document.getElementById('stats').innerHTML = `
+              <div class="error-message">
+                Impossible d'analyser les statistiques. Assurez-vous d'être sur une partie d'échecs.
+              </div>
+            `;
+          }
+        });
+      } catch (error) {
+        updateStatus("Erreur lors de l'analyse des statistiques", true);
+      }
     });
   }
 
@@ -203,7 +230,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
   suggestMoveButton.addEventListener('click', function() {
     chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+      if (!tabs[0]) {
+        updateStatus("Aucun onglet actif trouvé", true);
+        return;
+      }
+
       chrome.tabs.sendMessage(tabs[0].id, {action: "suggestMove"}, function(response) {
+        if (chrome.runtime.lastError) {
+          updateStatus("Erreur de communication avec la page", true);
+          return;
+        }
+
         if (response && response.status) {
           updateStatus(response.message);
           if (response.suggestion) {
@@ -213,7 +250,7 @@ document.addEventListener('DOMContentLoaded', function() {
             });
           }
         } else {
-          updateStatus(response.message || "Erreur lors de la suggestion de coup", true);
+          updateStatus(response?.message || "Erreur lors de la suggestion de coup", true);
         }
       });
     });
@@ -222,12 +259,26 @@ document.addEventListener('DOMContentLoaded', function() {
   // Gestionnaire pour le bouton "Jouer le coup suivant"
   nextMoveButton.addEventListener('click', function() {
     chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+      if (!tabs[0]) {
+        updateStatus("Aucun onglet actif trouvé", true);
+        return;
+      }
+
       chrome.tabs.sendMessage(tabs[0].id, {action: "clickNextMove"}, function(response) {
+        if (chrome.runtime.lastError) {
+          updateStatus("Erreur de communication avec la page", true);
+          return;
+        }
+
         if (response && response.status) {
           updateStatus("Coup joué avec succès");
-          // Attendre un peu avant d'analyser la nouvelle position
           setTimeout(() => {
             chrome.tabs.sendMessage(tabs[0].id, {action: "analyzePosition"}, function(analysisResponse) {
+              if (chrome.runtime.lastError) {
+                updateStatus("Erreur lors de l'analyse", true);
+                return;
+              }
+
               if (analysisResponse && analysisResponse.status) {
                 updateStatus("Analyse terminée");
                 if (analysisResponse.analysis) {
@@ -237,7 +288,7 @@ document.addEventListener('DOMContentLoaded', function() {
             });
           }, 1000);
         } else {
-          updateStatus(response.message || "Erreur lors du coup", true);
+          updateStatus(response?.message || "Erreur lors du coup", true);
         }
       });
     });

@@ -12,6 +12,22 @@ class ChessAnalyzer {
   constructor() {
     this.pieces = [];
     this.initializePieces();
+    this.stockfish = null;
+    this.initializeStockfish();
+    this.currentAnalysis = null;
+    this.analysisCallback = null;
+  }
+
+  initializeStockfish() {
+    try {
+      this.stockfish = new Worker(chrome.runtime.getURL('stockfish.js'));
+      this.stockfish.onmessage = this.handleStockfishMessage.bind(this);
+      this.stockfish.postMessage('uci');
+      this.stockfish.postMessage('setoption name MultiPV value 1');
+      this.stockfish.postMessage('setoption name Threads value 4');
+    } catch (error) {
+      console.error('Erreur lors de l\'initialisation de Stockfish:', error);
+    }
   }
 
   // Initialise les pièces à partir de l'échiquier
@@ -39,181 +55,94 @@ class ChessAnalyzer {
     return file + rank;
   }
 
-  // Analyse la position actuelle
-  analyzePosition() {
-    const analysis = {
-      material: this.calculateMaterial(),
-      development: this.assessDevelopment(),
-      kingSafety: this.assessKingSafety(),
-      pawnStructure: this.assessPawnStructure()
-    };
-
-    return {
-      evaluation: this.calculateEvaluation(analysis),
-      pieces: this.pieces.map(piece => ({
-        type: piece.type,
-        color: piece.color,
-        square: piece.square
-      }))
-    };
-  }
-
-  // Calcule l'avantage matériel
-  calculateMaterial() {
-    const values = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
-    let whiteMaterial = 0;
-    let blackMaterial = 0;
-
+  // Convertit la position en notation FEN
+  getFEN() {
+    let fen = '';
+    const board = Array(8).fill().map(() => Array(8).fill(null));
+    
+    // Placer les pièces sur le plateau
     this.pieces.forEach(piece => {
-      const value = values[piece.type];
-      if (piece.color === 'w') {
-        whiteMaterial += value;
-      } else {
-        blackMaterial += value;
-      }
+      const file = piece.square.charCodeAt(0) - 97;
+      const rank = 8 - parseInt(piece.square[1]);
+      const pieceChar = piece.type.toUpperCase();
+      board[rank][file] = piece.color === 'w' ? pieceChar : pieceChar.toLowerCase();
     });
 
-    return whiteMaterial - blackMaterial;
-  }
-
-  // Évalue le développement des pièces
-  assessDevelopment() {
-    let whiteDevelopment = 0;
-    let blackDevelopment = 0;
-
-    this.pieces.forEach(piece => {
-      if (piece.type !== 'p' && piece.type !== 'k') {
-        const rank = parseInt(piece.square[1]);
-        const development = piece.color === 'w' ? rank - 1 : 8 - rank;
-        if (piece.color === 'w') {
-          whiteDevelopment += development;
+    // Convertir en FEN
+    for (let rank = 0; rank < 8; rank++) {
+      let emptyCount = 0;
+      for (let file = 0; file < 8; file++) {
+        const piece = board[rank][file];
+        if (piece === null) {
+          emptyCount++;
         } else {
-          blackDevelopment += development;
+          if (emptyCount > 0) {
+            fen += emptyCount;
+            emptyCount = 0;
+          }
+          fen += piece;
         }
       }
-    });
-
-    return whiteDevelopment - blackDevelopment;
-  }
-
-  // Évalue la sécurité du roi
-  assessKingSafety() {
-    const whiteKing = this.pieces.find(p => p.type === 'k' && p.color === 'w');
-    const blackKing = this.pieces.find(p => p.type === 'k' && p.color === 'b');
-    
-    let whiteSafety = 0;
-    let blackSafety = 0;
-
-    if (whiteKing) {
-      whiteSafety = this.calculateKingSafety(whiteKing);
-    }
-    if (blackKing) {
-      blackSafety = this.calculateKingSafety(blackKing);
+      if (emptyCount > 0) {
+        fen += emptyCount;
+      }
+      if (rank < 7) fen += '/';
     }
 
-    return whiteSafety - blackSafety;
+    // Ajouter les autres informations FEN (tour, roque, etc.)
+    fen += ' w KQkq - 0 1';
+    return fen;
   }
 
-  // Calcule la sécurité du roi
-  calculateKingSafety(king) {
-    const rank = parseInt(king.square[1]);
-    const file = king.square.charCodeAt(0) - 97;
-    
-    if (rank === 1 && file === 4) return -2;
-    if (rank === 1 && (file === 6 || file === 2)) return 2;
-    
-    return 0;
-  }
-
-  // Évalue la structure de pions
-  assessPawnStructure() {
-    let whitePawns = this.pieces.filter(p => p.type === 'p' && p.color === 'w');
-    let blackPawns = this.pieces.filter(p => p.type === 'p' && p.color === 'b');
-    
-    return {
-      white: this.evaluatePawnStructure(whitePawns),
-      black: this.evaluatePawnStructure(blackPawns)
-    };
-  }
-
-  // Évalue la structure de pions d'une couleur
-  evaluatePawnStructure(pawns) {
-    let score = 0;
-    const files = new Set(pawns.map(p => p.square[0]));
-    
-    score -= (pawns.length - files.size) * 0.5;
-    
-    pawns.forEach(pawn => {
-      const file = pawn.square[0];
-      const hasAdjacentPawn = pawns.some(p => 
-        Math.abs(p.square.charCodeAt(0) - file.charCodeAt(0)) === 1
-      );
-      if (!hasAdjacentPawn) score -= 0.5;
-    });
-    
-    return score;
-  }
-
-  // Calcule l'évaluation globale
-  calculateEvaluation(analysis) {
-    const materialScore = analysis.material;
-    const developmentScore = analysis.development * 0.1;
-    const kingSafetyScore = analysis.kingSafety * 0.5;
-    const pawnStructureScore = (analysis.pawnStructure.white - analysis.pawnStructure.black) * 0.3;
-    
-    return (materialScore + developmentScore + kingSafetyScore + pawnStructureScore).toFixed(2);
-  }
-}
-
-// Initialisation de Stockfish et chess.js
-let stockfish = null;
-let chess = new Chess();
-
-// Fonction pour initialiser Stockfish
-function initStockfish() {
-  if (!stockfish) {
-    stockfish = new Worker('stockfish.js');
-    stockfish.postMessage('uci');
-    stockfish.postMessage('setoption name MultiPV value 1');
-    stockfish.postMessage('setoption name Skill Level value 20');
-  }
-}
-
-// Fonction pour analyser une position avec Stockfish
-function analyzePositionWithStockfish(fen, depth = 20) {
-  return new Promise((resolve) => {
-    let bestMove = null;
-    let evaluation = 0;
-
-    stockfish.onmessage = function(event) {
-      const message = event.data;
-      
-      if (message.includes('bestmove')) {
-        const move = message.split(' ')[1];
-        resolve({
-          bestMove: move,
-          evaluation: evaluation
-        });
-      } else if (message.includes('cp ')) {
-        // Extraction de l'évaluation en centipawns
-        const cpMatch = message.match(/cp (-?\d+)/);
-        if (cpMatch) {
-          evaluation = parseInt(cpMatch[1]) / 100;
+  // Gère les messages de Stockfish
+  handleStockfishMessage(event) {
+    const message = event.data;
+    if (message.startsWith('info depth')) {
+      const evalMatch = message.match(/score (cp|mate) (-?\d+)/);
+      if (evalMatch) {
+        const type = evalMatch[1];
+        const value = parseInt(evalMatch[2]);
+        const evaluation = type === 'cp' ? value / 100 : (value > 0 ? 100 : -100);
+        
+        if (this.analysisCallback) {
+          this.analysisCallback({
+            evaluation: evaluation,
+            pieces: this.pieces.map(piece => ({
+              type: piece.type,
+              color: piece.color,
+              square: piece.square
+            }))
+          });
         }
       }
-    };
+    }
+  }
 
-    chess.load(fen);
-    stockfish.postMessage('position fen ' + fen);
-    stockfish.postMessage('go depth ' + depth);
-  });
+  // Analyse la position actuelle
+  analyzePosition(callback) {
+    if (!this.stockfish) {
+      console.error('Stockfish n\'est pas initialisé');
+      callback({
+        evaluation: 0,
+        pieces: this.pieces.map(piece => ({
+          type: piece.type,
+          color: piece.color,
+          square: piece.square
+        }))
+      });
+      return;
+    }
+
+    this.analysisCallback = callback;
+    const fen = this.getFEN();
+    this.stockfish.postMessage('position fen ' + fen);
+    this.stockfish.postMessage('go depth 15');
+  }
 }
 
-// Fonction améliorée pour évaluer la qualité du coup
-async function evaluateMoveQuality(evaluation, fen, move) {
-  const analysis = await analyzePositionWithStockfish(fen);
-  const evalValue = analysis.evaluation;
-  
+// Fonction pour évaluer la qualité du coup
+function evaluateMoveQuality(evaluation) {
+  const evalValue = parseFloat(evaluation);
   let quality = '';
   let explanation = '';
   let tacticalElements = [];
@@ -227,56 +156,100 @@ async function evaluateMoveQuality(evaluation, fen, move) {
   }
 
   // Analyse stratégique
-  const position = chess.position();
-  const pieceCount = Object.keys(position).length;
-  const pawnCount = Object.values(position).filter(p => p.type === 'p').length;
-  
-  if (pieceCount < 10) {
-    strategicElements.push('Finale');
-  } else if (pawnCount < 8) {
-    strategicElements.push('Middlegame avancé');
-  } else {
-    strategicElements.push('Middlegame');
+  if (Math.abs(evalValue) > 1.5) {
+    strategicElements.push('Avantage positionnel important');
   }
 
-  // Évaluation détaillée
+  // Évaluation détaillée pour les blancs
   if (evalValue > 0) {
     if (evalValue > 3) {
       quality = 'Coup brillant';
-      explanation = `Ce coup donne un avantage décisif aux blancs (${evalValue.toFixed(2)}). `;
+      explanation = 'Ce coup donne un avantage décisif aux blancs. ';
+      if (tacticalElements.length > 0) {
+        explanation += 'Les blancs ont un avantage tactique écrasant. ';
+      }
+      if (strategicElements.length > 0) {
+        explanation += 'La position est stratégiquement dominante. ';
+      }
+      explanation += 'Les noirs sont dans une position très difficile.';
     } else if (evalValue > 2) {
       quality = 'Excellent coup';
-      explanation = `Ce coup donne un avantage significatif aux blancs (${evalValue.toFixed(2)}). `;
+      explanation = 'Ce coup donne un avantage significatif aux blancs. ';
+      if (tacticalElements.length > 0) {
+        explanation += 'Les blancs ont un avantage tactique clair. ';
+      }
+      if (strategicElements.length > 0) {
+        explanation += 'La position est stratégiquement favorable. ';
+      }
+      explanation += 'Les noirs doivent jouer avec précision pour maintenir l\'équilibre.';
     } else if (evalValue > 1) {
       quality = 'Bon coup';
-      explanation = `Ce coup donne un avantage modéré aux blancs (${evalValue.toFixed(2)}). `;
+      explanation = 'Ce coup donne un avantage modéré aux blancs. ';
+      if (tacticalElements.length > 0) {
+        explanation += 'Les blancs ont un petit avantage tactique. ';
+      }
+      if (strategicElements.length > 0) {
+        explanation += 'La position est légèrement favorable. ';
+      }
+      explanation += 'Les noirs peuvent encore défendre avec précision.';
     } else if (evalValue > 0.5) {
       quality = 'Coup correct';
-      explanation = `Ce coup donne un petit avantage aux blancs (${evalValue.toFixed(2)}). `;
-    } else {
+      explanation = 'Ce coup donne un petit avantage aux blancs. ';
+      explanation += 'La position est légèrement favorable, mais les noirs peuvent facilement maintenir l\'équilibre.';
+    } else if (evalValue > 0.2) {
       quality = 'Coup théorique';
-      explanation = `Ce coup maintient l'équilibre (${evalValue.toFixed(2)}). `;
-    }
-  } else {
-    if (evalValue < -3) {
-      quality = 'Coup faible';
-      explanation = `Ce coup donne un avantage décisif aux noirs (${Math.abs(evalValue).toFixed(2)}). `;
-    } else if (evalValue < -2) {
-      quality = 'Coup médiocre';
-      explanation = `Ce coup donne un avantage significatif aux noirs (${Math.abs(evalValue).toFixed(2)}). `;
-    } else if (evalValue < -1) {
-      quality = 'Coup douteux';
-      explanation = `Ce coup donne un avantage modéré aux noirs (${Math.abs(evalValue).toFixed(2)}). `;
-    } else if (evalValue < -0.5) {
-      quality = 'Coup passable';
-      explanation = `Ce coup donne un petit avantage aux noirs (${Math.abs(evalValue).toFixed(2)}). `;
-    } else {
-      quality = 'Coup théorique';
-      explanation = `Ce coup maintient l'équilibre (${Math.abs(evalValue).toFixed(2)}). `;
+      explanation = 'Ce coup maintient un léger avantage pour les blancs. ';
+      explanation += 'La position est équilibrée avec une petite initiative blanche.';
     }
   }
+  // Évaluation détaillée pour les noirs
+  else if (evalValue < 0) {
+    if (evalValue < -3) {
+      quality = 'Coup faible';
+      explanation = 'Ce coup donne un avantage décisif aux noirs. ';
+      if (tacticalElements.length > 0) {
+        explanation += 'Les blancs sont dans une position tactiquement désespérée. ';
+      }
+      if (strategicElements.length > 0) {
+        explanation += 'La position est stratégiquement perdue. ';
+      }
+      explanation += 'Les blancs sont dans une position très difficile.';
+    } else if (evalValue < -2) {
+      quality = 'Coup médiocre';
+      explanation = 'Ce coup donne un avantage significatif aux noirs. ';
+      if (tacticalElements.length > 0) {
+        explanation += 'Les blancs ont une position tactiquement faible. ';
+      }
+      if (strategicElements.length > 0) {
+        explanation += 'La position est stratégiquement défavorable. ';
+      }
+      explanation += 'Les blancs doivent jouer avec précision pour maintenir l\'équilibre.';
+    } else if (evalValue < -1) {
+      quality = 'Coup douteux';
+      explanation = 'Ce coup donne un avantage modéré aux noirs. ';
+      if (tacticalElements.length > 0) {
+        explanation += 'Les blancs ont une position tactiquement difficile. ';
+      }
+      if (strategicElements.length > 0) {
+        explanation += 'La position est stratégiquement désavantageuse. ';
+      }
+      explanation += 'Les blancs peuvent encore défendre avec précision.';
+    } else if (evalValue < -0.5) {
+      quality = 'Coup passable';
+      explanation = 'Ce coup donne un petit avantage aux noirs. ';
+      explanation += 'La position est légèrement défavorable, mais les blancs peuvent facilement maintenir l\'équilibre.';
+    } else if (evalValue < -0.2) {
+      quality = 'Coup théorique';
+      explanation = 'Ce coup maintient un léger désavantage pour les blancs. ';
+      explanation += 'La position est équilibrée avec une petite initiative noire.';
+    }
+  } else {
+    quality = 'Coup théorique';
+    explanation = 'Ce coup maintient l\'équilibre parfait de la position. ';
+    explanation += 'Aucun camp n\'a d\'avantage significatif.';
+  }
 
-  // Ajout des éléments tactiques et stratégiques
+  // Ajout d'éléments tactiques et stratégiques à l'explication
   if (tacticalElements.length > 0) {
     explanation += '\n\nÉléments tactiques : ' + tacticalElements.join(', ');
   }
@@ -289,50 +262,9 @@ async function evaluateMoveQuality(evaluation, fen, move) {
     explanation,
     evaluation: evalValue,
     tacticalElements,
-    strategicElements,
-    bestMove: analysis.bestMove
+    strategicElements
   };
 }
-
-// Fonction pour obtenir la notation FEN de la position actuelle
-function getCurrentFEN() {
-  const pieces = document.querySelectorAll('.piece');
-  let fen = '';
-  let emptySquares = 0;
-  
-  for (let rank = 8; rank >= 1; rank--) {
-    for (let file = 0; file < 8; file++) {
-      const square = String.fromCharCode(97 + file) + rank;
-      const piece = Array.from(pieces).find(p => p.classList.contains(`square-${file + 1}${rank}`));
-      
-      if (piece) {
-        if (emptySquares > 0) {
-          fen += emptySquares;
-          emptySquares = 0;
-        }
-        const pieceClass = Array.from(piece.classList).find(c => /^[bw][prnbqk]$/.test(c));
-        if (pieceClass) {
-          const color = pieceClass[0] === 'w' ? '' : pieceClass[0].toUpperCase();
-          const type = pieceClass[1].toUpperCase();
-          fen += color + type;
-        }
-      } else {
-        emptySquares++;
-      }
-    }
-    
-    if (emptySquares > 0) {
-      fen += emptySquares;
-      emptySquares = 0;
-    }
-    if (rank > 1) fen += '/';
-  }
-  
-  return fen + ' w KQkq - 0 1';
-}
-
-// Initialiser Stockfish au chargement
-initStockfish();
 
 // Fonction pour analyser les statistiques des coups
 function analyzeGameStats() {
@@ -354,7 +286,7 @@ function analyzeGameStats() {
     
     if (whiteMove) {
       const moveText = whiteMove.textContent.trim();
-      const evaluation = evaluateMoveQuality(parseFloat(whiteMove.getAttribute('data-eval') || '0'), getCurrentFEN(), moveText);
+      const evaluation = evaluateMoveQuality(parseFloat(whiteMove.getAttribute('data-eval') || '0'));
       moves.push({
         number: moveNumber,
         color: 'white',
@@ -366,7 +298,7 @@ function analyzeGameStats() {
     
     if (blackMove) {
       const moveText = blackMove.textContent.trim();
-      const evaluation = evaluateMoveQuality(parseFloat(blackMove.getAttribute('data-eval') || '0'), getCurrentFEN(), moveText);
+      const evaluation = evaluateMoveQuality(parseFloat(blackMove.getAttribute('data-eval') || '0'));
       moves.push({
         number: moveNumber,
         color: 'black',
@@ -394,20 +326,28 @@ function analyzeGameStats() {
 // Gestionnaire de messages pour l'extension
 chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
   if (request.action === "analyzePosition") {
-    const analyzer = new ChessAnalyzer();
-    const analysis = analyzer.analyzePosition();
-    const moveEvaluation = evaluateMoveQuality(analysis.evaluation, getCurrentFEN(), '');
-    
-    sendResponse({
-      status: true,
-      message: "Analyse terminée",
-      analysis: {
-        evaluation: analysis.evaluation,
-        pieces: analysis.pieces,
-        moveQuality: moveEvaluation.quality,
-        moveExplanation: moveEvaluation.explanation
-      }
-    });
+    try {
+      const analyzer = new ChessAnalyzer();
+      analyzer.analyzePosition(function(analysis) {
+        const moveEvaluation = evaluateMoveQuality(analysis.evaluation);
+        sendResponse({
+          status: true,
+          message: "Analyse terminée",
+          analysis: {
+            evaluation: analysis.evaluation,
+            pieces: analysis.pieces,
+            moveQuality: moveEvaluation.quality,
+            moveExplanation: moveEvaluation.explanation
+          }
+        });
+      });
+    } catch (error) {
+      console.error('Erreur lors de l\'analyse:', error);
+      sendResponse({
+        status: false,
+        message: "Erreur lors de l'analyse: " + error.message
+      });
+    }
     return true;
   }
   
@@ -464,4 +404,4 @@ function observeBoardChanges() {
 }
 
 // Démarrer l'observation
-observeBoardChanges(); 
+observeBoardChanges();
