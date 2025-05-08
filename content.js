@@ -1,4 +1,3 @@
-// Classe pour représenter une pièce d'échecs
 class Piece {
   constructor(type, color, square) {
     this.type = type;  // 'p', 'n', 'b', 'r', 'q', 'k'
@@ -7,37 +6,19 @@ class Piece {
   }
 }
 
-// Classe pour analyser la position
 class ChessAnalyzer {
   constructor() {
     this.pieces = [];
     this.initializePieces();
-    this.stockfish = null;
-    this.initializeStockfish();
     this.currentAnalysis = null;
     this.analysisCallback = null;
   }
 
-  initializeStockfish() {
-    try {
-      this.stockfish = new Worker(chrome.runtime.getURL('stockfish.js'));
-      this.stockfish.onmessage = this.handleStockfishMessage.bind(this);
-      this.stockfish.postMessage('uci');
-      this.stockfish.postMessage('setoption name MultiPV value 1');
-      this.stockfish.postMessage('setoption name Threads value 4');
-    } catch (error) {
-      console.error('Erreur lors de l\'initialisation de Stockfish:', error);
-    }
-  }
-
-  // Initialise les pièces à partir de l'échiquier
   initializePieces() {
     const pieces = document.querySelectorAll('.piece');
     pieces.forEach(piece => {
       const classes = piece.className.split(' ');
-      // Chercher la classe du type de pièce (ex: br, wn, etc.)
       const typeClass = classes.find(c => /^[bw][prnbqk]$/.test(c));
-      // Chercher la classe de la case (ex: square-88)
       const squareClass = classes.find(c => c.startsWith('square-'));
       if (typeClass && squareClass) {
         const color = typeClass[0];
@@ -48,19 +29,16 @@ class ChessAnalyzer {
     });
   }
 
-  // Convertit la notation numérique en notation algébrique
   convertSquareNotation(numNotation) {
     const file = String.fromCharCode(96 + parseInt(numNotation[0]));
     const rank = numNotation[1];
     return file + rank;
   }
 
-  // Convertit la position en notation FEN
   getFEN() {
     let fen = '';
     const board = Array(8).fill().map(() => Array(8).fill(null));
     
-    // Placer les pièces sur le plateau
     this.pieces.forEach(piece => {
       const file = piece.square.charCodeAt(0) - 97;
       const rank = 8 - parseInt(piece.square[1]);
@@ -68,7 +46,6 @@ class ChessAnalyzer {
       board[rank][file] = piece.color === 'w' ? pieceChar : pieceChar.toLowerCase();
     });
 
-    // Convertir en FEN
     for (let rank = 0; rank < 8; rank++) {
       let emptyCount = 0;
       for (let file = 0; file < 8; file++) {
@@ -89,12 +66,10 @@ class ChessAnalyzer {
       if (rank < 7) fen += '/';
     }
 
-    // Ajouter les autres informations FEN (tour, roque, etc.)
     fen += ' w KQkq - 0 1';
     return fen;
   }
 
-  // Gère les messages de Stockfish
   handleStockfishMessage(event) {
     const message = event.data;
     if (message.startsWith('info depth')) {
@@ -118,29 +93,35 @@ class ChessAnalyzer {
     }
   }
 
-  // Analyse la position actuelle
   analyzePosition(callback) {
-    if (!this.stockfish) {
-      console.error('Stockfish n\'est pas initialisé');
+    const fen = this.getFEN();
+    analyzeWithStockfish(fen, (result) => {
+      if (!result) {
+        callback({ evaluation: 0, pieces: this.pieces });
+        return;
+      }
+      let evaluation = 0;
+      const lines = result.split('\n');
+      let lastScoreLine = lines.reverse().find(line => line.includes('score'));
+      if (!lastScoreLine) lastScoreLine = result;
+      const evalMatch = lastScoreLine.match(/score (cp|mate) (-?\\d+)/);
+      if (evalMatch) {
+        const type = evalMatch[1];
+        const value = parseInt(evalMatch[2]);
+        evaluation = type === 'cp' ? value / 100 : (value > 0 ? 100 : -100);
+      }
       callback({
-        evaluation: 0,
+        evaluation: evaluation,
         pieces: this.pieces.map(piece => ({
           type: piece.type,
           color: piece.color,
           square: piece.square
         }))
       });
-      return;
-    }
-
-    this.analysisCallback = callback;
-    const fen = this.getFEN();
-    this.stockfish.postMessage('position fen ' + fen);
-    this.stockfish.postMessage('go depth 15');
+    });
   }
 }
 
-// Fonction pour évaluer la qualité du coup
 function evaluateMoveQuality(evaluation) {
   const evalValue = parseFloat(evaluation);
   let quality = '';
@@ -148,19 +129,16 @@ function evaluateMoveQuality(evaluation) {
   let tacticalElements = [];
   let strategicElements = [];
 
-  // Analyse tactique
   if (Math.abs(evalValue) > 3) {
     tacticalElements.push('Avantage tactique décisif');
   } else if (Math.abs(evalValue) > 2) {
     tacticalElements.push('Avantage tactique significatif');
   }
 
-  // Analyse stratégique
   if (Math.abs(evalValue) > 1.5) {
     strategicElements.push('Avantage positionnel important');
   }
 
-  // Évaluation détaillée pour les blancs
   if (evalValue > 0) {
     if (evalValue > 3) {
       quality = 'Coup brillant';
@@ -201,9 +179,7 @@ function evaluateMoveQuality(evaluation) {
       explanation = 'Ce coup maintient un léger avantage pour les blancs. ';
       explanation += 'La position est équilibrée avec une petite initiative blanche.';
     }
-  }
-  // Évaluation détaillée pour les noirs
-  else if (evalValue < 0) {
+  } else if (evalValue < 0) {
     if (evalValue < -3) {
       quality = 'Coup faible';
       explanation = 'Ce coup donne un avantage décisif aux noirs. ';
@@ -249,7 +225,6 @@ function evaluateMoveQuality(evaluation) {
     explanation += 'Aucun camp n\'a d\'avantage significatif.';
   }
 
-  // Ajout d'éléments tactiques et stratégiques à l'explication
   if (tacticalElements.length > 0) {
     explanation += '\n\nÉléments tactiques : ' + tacticalElements.join(', ');
   }
@@ -266,7 +241,6 @@ function evaluateMoveQuality(evaluation) {
   };
 }
 
-// Fonction pour analyser les statistiques des coups
 function analyzeGameStats() {
   const moveList = document.querySelector('.analysis-view-movelist');
   if (!moveList) {
@@ -323,8 +297,42 @@ function analyzeGameStats() {
   };
 }
 
-// Gestionnaire de messages pour l'extension
-chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
+function analyzeWithStockfish(fen, callback) {
+  chrome.runtime.sendMessage(
+    { action: "analyzeWithStockfish", command: "position fen " + fen },
+    (response) => {
+      if (response && response.result) {
+        callback(response.result);
+      } else {
+        callback(null);
+      }
+    }
+  );
+}
+
+let stockfishWorker = null;
+let pendingResponses = {};
+
+function getWorker() {
+  if (!stockfishWorker) {
+    stockfishWorker = new Worker(chrome.runtime.getURL('stockfish.js'));
+  }
+  return stockfishWorker;
+}
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "analyzeWithStockfish") {
+    const worker = getWorker();
+    const command = request.command;
+    const onMessage = (event) => {
+      sendResponse({ result: event.data });
+      worker.removeEventListener('message', onMessage);
+    };
+    worker.addEventListener('message', onMessage);
+    worker.postMessage(command);
+    return true; // réponse asynchrone
+  }
+
   if (request.action === "analyzePosition") {
     try {
       const analyzer = new ChessAnalyzer();
@@ -354,10 +362,26 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
   if (request.action === "clickNextMove") {
     const nextMoveButton = document.querySelector('button.cc-button-component[aria-label="Coup suivant"]');
     if (nextMoveButton) {
-      nextMoveButton.click();
-      sendResponse({
-        status: true,
-        message: "Coup joué avec succès"
+      nextMoveButton.addEventListener('click', function() {
+        chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+          if (!tabs[0]) {
+            updateStatus("Aucun onglet actif trouvé", true);
+            return;
+          }
+
+          chrome.tabs.sendMessage(tabs[0].id, {action: "clickNextMove"}, function(response) {
+            if (chrome.runtime.lastError) {
+              updateStatus("Erreur de communication avec la page", true);
+              return;
+            }
+
+            if (response && response.status) {
+              updateStatus("Coup joué, analyse en cours...");
+            } else {
+              updateStatus(response?.message || "Erreur lors du coup", true);
+            }
+          });
+        });
       });
     } else {
       sendResponse({
@@ -373,22 +397,28 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
     sendResponse(stats);
     return true;
   }
+
+  if (request.action === "moveAnalyzed") {
+    updateStatus("Analyse du coup terminée");
+    if (request.analysis) {
+      showAnalysis(request.analysis);
+    }
+  }
 });
 
-// Observer les changements sur l'échiquier
+let lastSentAnalysis = null;
+
 function observeBoardChanges() {
   const observer = new MutationObserver(function(mutations) {
     mutations.forEach(function(mutation) {
       if (mutation.type === 'childList' && mutation.target.classList.contains('board')) {
         const analyzer = new ChessAnalyzer();
-        const analysis = analyzer.analyzePosition();
-        
-        chrome.runtime.sendMessage({
-          action: "positionUpdated",
-          analysis: {
-            evaluation: analysis.evaluation,
-            pieces: analysis.pieces
-          }
+        analyzer.analyzePosition(function(analysis) {
+          lastSentAnalysis = analysis;
+          chrome.runtime.sendMessage({
+            action: "moveAnalyzed",
+            analysis: analysis
+          });
         });
       }
     });
@@ -403,5 +433,43 @@ function observeBoardChanges() {
   }
 }
 
-// Démarrer l'observation
 observeBoardChanges();
+
+chrome.runtime.sendMessage(
+  { action: "analyzeWithStockfish", command: "position fen ..." },
+  (response) => {
+    // Utilise response.result ici
+  }
+);
+
+const analyzer = new ChessAnalyzer();
+analyzer.analyzePosition(function(analysis) {
+  // analysis.evaluation contient l'évaluation Stockfish
+  // analysis.pieces contient les pièces
+  // Tu peux ensuite afficher le résultat dans ton popup ou ailleurs
+});
+
+function analyzeCurrentPosition() {
+  chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+    if (!tabs[0] || !tabs[0].url.includes("chess.com")) {
+      updateStatus("Ouvre une partie sur chess.com pour utiliser l'extension.", true);
+      return;
+    }
+
+    chrome.tabs.sendMessage(tabs[0].id, {action: "analyzePosition"}, function(response) {
+      if (chrome.runtime.lastError) {
+        updateStatus("Impossible de communiquer avec la page. Es-tu bien sur une partie chess.com ?", true);
+        return;
+      }
+
+      if (response && response.status) {
+        updateStatus(response.message);
+        if (response.analysis) {
+          showAnalysis(response.analysis);
+        }
+      } else {
+        updateStatus(response?.message || "Erreur lors de l'analyse", true);
+      }
+    });
+  });
+}

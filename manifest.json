@@ -26,7 +26,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["images/*", "stockfish.js"],
+      "resources": ["images/*", "scripts/stockfish.js"],
       "matches": ["https://*.chess.com/*"]
     }
   ],
@@ -35,4 +35,4 @@
     "48": "images/icon48.png",
     "128": "images/icon128.png"
   }
-} 
+}
